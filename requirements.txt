@@ -1,8 +1,12 @@
 streamlit
 pandas
+numpy
 matplotlib
 seaborn
 plotly
-numpy
+altair
+scikit-learn
+xgboost
+shap
 jupyter
  
