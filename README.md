@@ -82,37 +82,19 @@ This project explores the IPL through deep data analysis AND machine learning. T
                         │   USER    │
                         └───────────┘
 ```
-
 ---
 
 ## 📁 Project Structure
 
 ```
 IPL-Analytics/
-│
-├── dataset/
-│   ├── deliveries_updated_ipl_upto_2025.csv   # Ball-by-ball delivery data
-│   ├── matches_updated_ipl_upto_2025.csv      # Match-level records
-│   └── IPL_dataset.csv                        # Final merged dataset (output of notebook)
-│
-├── models/                                    # Phase 2 — trained artifacts
-│   ├── toss_winner_model.pkl
-│   ├── match_winner_model.pkl
-│   ├── live_match_model.pkl
-│   ├── encoders.pkl
-│   ├── team_stats.pkl
-│   └── meta.json
-│
-├── Data_Preparation.ipynb                     # Phase 1 — cleaning, EDA, dataset merging
-├── Dashboard_Application.py                   # Streamlit dashboard (all 7 tabs)
-│
-├── features.py                                # Phase 2 — feature engineering
-├── train_models.py                            # Phase 2 — pre-match + toss models
-├── train_live_model.py                        # Phase 2 — live (over-by-over) model
-├── predict.py                                 # Phase 2 — inference + SHAP
-├── tab7_prediction.py                         # Phase 2 — prediction tab UI
-│
-├── requirements.txt                           # Python dependencies
+├── dataset/              # raw CSVs + merged IPL_dataset.csv
+├── models/               # trained .pkl artifacts (Phase 2)
+├── Data_Preparation.ipynb
+├── Dashboard_Application.py
+├── features.py · train_models.py · train_live_model.py
+├── predict.py · tab7_prediction.py
+├── requirements.txt
 └── README.md
 ```
 
@@ -120,206 +102,68 @@ IPL-Analytics/
 
 ## 📊 Dashboard Tabs
 
-| Tab | Phase | Description |
-|-----|-------|-------------|
-| **IPL Overview**       | 1 | Season-wise match counts, average runs, top cities, toss decisions |
-| **Batting Stats**      | 1 | Top batsmen, strike rates, phase-weighted impact scores, clutch performers |
-| **Bowling Performance**| 1 | Wicket leaders, economy rates, dismissal type breakdowns |
-| **Game Outcome**       | 1 | Toss vs. match win analysis, outcome types, venue impact |
-| **Game Changers**      | 1 | Momentum swing detector, collapse windows, momentum intensity curve |
-| **Teams Hub**          | 1 | Per-team profiles: seasons played, wins, toss wins, total runs & wickets |
-| **🔮 Prediction**      | 2 | Toss + pre-match winner (with SHAP) + live over-by-over win probability |
+| # | Tab | Phase | What it shows |
+|---|-----|-------|---------------|
+| 1 | IPL Overview        | 1 | Season counts, avg runs, top cities, toss decisions |
+| 2 | Batting Stats       | 1 | Top batsmen, strike rates, clutch performers |
+| 3 | Bowling Performance | 1 | Wicket leaders, economy, dismissal breakdown |
+| 4 | Game Outcome        | 1 | Toss vs. win, outcome types, venue impact |
+| 5 | Game Changers       | 1 | Momentum swings, collapse windows |
+| 6 | Teams Hub           | 1 | Per-team profile (seasons, wins, runs, wickets) |
+| 7 | 🔮 **Prediction**   | 2 | Toss + match winner (SHAP) + live win probability |
 
-### 🔘 Sidebar Filters
-- **Season Range Slider** — Filter data from any range within 2007–2025
-- **Team Selector** — Drill down into a specific franchise across all tabs
-- **Current-season only** — The Prediction tab restricts Team A / Team B pickers to the 10 IPL 2025 franchises (defunct franchises are hidden)
+**Sidebar:** season-range slider · team selector · current-season roster filter in Tab 7.
 
 ---
 
-## 🧹 Phase 1 — Data Preparation (`Data_Preparation.ipynb`)
+## 🧹 Phase 1 — Data Prep
 
-### Deliveries Dataset
-- Imputed null values in `isWide`, `isNoBall`, `Byes`, `LegByes`, `Penalty` with `0`
-- Parsed `date` column and extracted `season` (year)
-- Removed duplicate deliveries (by `matchId`, `inning`, `over`, `ball`)
-- Removed Super Over deliveries (`inning > 2`)
-- Filled missing `dismissal_kind` with `"not out"`; derived `is_wicket` flag
-- Computed `total_runs` = `batsman_runs + extras`
-- Computed `valid_ball` flag (excludes wides and no-balls)
-- Standardised team names for consistency across seasons:
-  - `Kings XI Punjab` → `Punjab Kings`
-  - `Delhi Daredevils` → `Delhi Capitals`
-  - `Royal Challengers Bangalore` → `Royal Challengers Bengaluru`
+- Null handling, dedup, Super Over removal, team-name standardisation (`Bangalore → Bengaluru`, `Kings XI → Punjab Kings`, `Daredevils → Capitals`)
+- Derived flags: `is_wicket`, `valid_ball`, `total_runs`, `toss_win`
+- Merged deliveries ⋈ matches on `match_id` → `IPL_dataset.csv`
 
-### Matches Dataset
-- Imputed missing `city` values using venue-to-city mapping (Dubai, Sharjah)
-- Filled `neutralvenue`, `eliminator`, `method`, and `outcome` nulls with appropriate defaults
-- Extracted clean 4-digit `season` from mixed-format season strings
-- Derived `toss_win` boolean column
-- Dropped redundant `date1`, `date2` columns
-- Applied same team name standardisation as deliveries
+## 🤖 Phase 2 — Models
 
-### Dataset Merge
-- Merged deliveries and matches on `match_id` (left join)
-- Resolved duplicate `date` and `season` columns from both sources
-- Final dataset saved as `dataset/IPL_dataset.csv`
+| Task | Model | Accuracy | Log-loss |
+|------|-------|---------:|---------:|
+| Toss winner      | LR (L1) | ~54 % | 0.688 |
+| Pre-match winner | LR (L1) | ~63 % | 0.638 |
+| **Live winner**  | **XGBoost** | **70.0 %** | **0.546** |
 
----
-
-## 🤖 Phase 2 — Predictive Analytics
-
-Phase 2 adds three models on top of the unified dataset. All three share the same data-prep output; no new raw data is required.
-
-### 2.1 Feature Engineering (`features.py`)
-
-Ball-by-ball rows are aggregated up to **team-match** rows, then enriched with **time-aware** signals so the model never peeks into the future:
-
-| Feature family | Examples |
-|---|---|
-| Team strength   | H2H win rate, recent-10-match form, batting / bowling ratings |
-| Venue           | Team-at-venue win rate, average 1st-innings score, chase success |
-| Matchup         | Strength difference, form difference, streak difference |
-| Toss            | Toss winner, toss decision (bat / field) |
-| Season          | Team's season-so-far record, momentum score |
-
-Difference features (`strength_diff`, `form_diff`, `streak_diff`, …) replace raw pairs to reduce collinearity and make SHAP attributions cleaner.
-
-### 2.2 Pre-match Models (`train_models.py`)
-
-Two classifiers trained on **1,146 matches** (chronological train/test split so future info never leaks):
-
-| Task | Best model | Accuracy | Log-loss |
-|------|-----------|----------|----------|
-| **Toss winner**  | Logistic Regression (L1) | ~54 % | 0.688 |
-| **Match winner** | Logistic Regression (L1) | ~63 % | 0.638 |
-
-L1 was selected over L2 and XGBoost on held-out **log-loss** — it produced better-calibrated probabilities despite similar top-1 accuracy.
-
-### 2.3 Live-match Model (`train_live_model.py`)
-
-Walks the ball-by-ball CSV and snapshots match state at the end of every over in both innings, producing **46,380 training rows** across all matches. Features are **state-only** (no pre-match team strength) because in-game state dominates once balls have been bowled:
-
-```
-inning, overs_done, balls_remaining, score, wickets_in_hand,
-current_rr, is_inn2, target, runs_needed, req_rr, rr_diff,
-wickets_per_over
-```
-
-A **match-ID-aware train/test split** prevents snapshot leakage across splits (all snapshots from a given match land on the same side).
-
-| Model | Accuracy | Log-loss |
-|---|---|---|
-| LR (L2) | 66.4 % | 0.603 |
-| LR (L1) | 66.1 % | 0.608 |
-| **XGBoost** ✅ | **70.0 %** | **0.546** |
-
-### 2.4 Inference + SHAP (`predict.py`)
-
-| Function | What it returns |
-|---|---|
-| `predict_toss_winner(team_a, team_b, venue)` | `{prob_a, prob_b}` |
-| `predict_match_winner(team_a, team_b, venue, toss_winner?, toss_decision?)` | `{prob_a, prob_b, toss_winner_used}` — marginalises over toss if unknown |
-| `explain_prediction(...)` | `{prediction, contributions[], summary}` — SHAP values + plain-English summary |
-| `predict_live_match(team_a, team_b, venue, current_score, wickets, overs, batting_team, target?, inning?)` | `{prob_a, prob_b, commentary, state}` |
-| `list_active_teams()` / `current_season()` | Restrict UI to the 10 IPL 2025 franchises |
-
-SHAP contributions are rendered as a horizontal bar chart colored by which team each feature favors, plus an auto-generated plain-English summary grouping factors by "pros / cons" for Team A.
-
-### 2.5 Prediction Tab UI (`tab7_prediction.py`)
-
-- **Current-season roster only** — Team A / Team B pickers hide defunct franchises.
-- **Latched Predict button** — once clicked, the result persists in `st.session_state` so adjusting inputs later re-renders without re-clicking.
-- **Live block is an `@st.fragment`** — clicking "Predict live" only re-runs the bottom live block; the toss / match / SHAP section above never reloads.
-
----
-
-## 📈 Key Insights (Phase 1)
-
-- Matches per season grew from ~55 (2007) to ~75 (2025)
-- Teams predominantly choose to **field first** after winning the toss
-- **Mumbai** hosts the most IPL matches of any city
-- More matches are won by **wickets** (chasing teams) than by runs
-- Defending teams win by ~30 runs on average; chasing teams win by ~6 wickets
-- Most dismissals are **caught** out
-- Toss win translates to match win roughly **50 %** of the time — limited advantage (and our toss-as-a-feature model confirms this: toss contributes little to match-winner SHAP)
-
----
-
-## 🛠️ Tech Stack
-
-| Tool | Purpose |
-|------|---------|
-| Python 3             | Core language |
-| Pandas / NumPy       | Data manipulation |
-| Matplotlib / Seaborn | Static visualisations (EDA) |
-| Plotly / Plotly Express | Interactive charts in dashboard |
-| Altair               | SHAP bar chart in Prediction tab |
-| Streamlit            | Dashboard application framework |
-| Jupyter Notebook     | Data preparation and EDA |
-| scikit-learn         | Logistic Regression, train/test split, metrics |
-| XGBoost              | Live-match gradient-boosted classifier |
-| SHAP                 | Model explanations |
+- **Features:** team strength, H2H, form, venue win rate, toss, momentum, difference features to reduce collinearity.
+- **Live model:** 46,380 over-by-over snapshots, state-only features (score, wickets, overs, RR, required-RR).
+- **Explainability:** SHAP bar chart + plain-English summary in Tab 7.
+- **UX:** latched Predict button + `@st.fragment` so live prediction re-runs only its own block.
 
 ---
 
 ## 🚀 Getting Started
 
-### 1. Clone the repository
 ```bash
-git clone https://github.com/<your-username>/ipl-analytics.git
-cd ipl-analytics
-```
-
-### 2. Install dependencies
-```bash
+# 1. install
 pip install -r requirements.txt
-```
 
-### 3. Prepare the dataset (Phase 1)
-Run `Data_Preparation.ipynb` end-to-end to generate `dataset/IPL_dataset.csv`.
-*(Skip this step if `IPL_dataset.csv` is already present in the `dataset/` folder.)*
+# 2. (optional) regenerate merged dataset
+jupyter nbconvert --execute Data_Preparation.ipynb
 
-### 4. Train the models (Phase 2)
-```bash
-python train_models.py        # toss + pre-match winner models
-python train_live_model.py    # live (over-by-over) model
-```
-Artifacts are written to `models/`. Skip this step if `models/` already contains the `.pkl` files.
+# 3. (optional) retrain models
+python train_models.py
+python train_live_model.py
 
-### 5. Launch the dashboard
-```bash
+# 4. run the dashboard
 streamlit run Dashboard_Application.py
 ```
-The dashboard opens at http://localhost:8501 with all 7 tabs.
 
----
+## 🛠️ Tech Stack
 
-## 📦 Requirements
-
-```
-streamlit
-pandas
-numpy
-matplotlib
-seaborn
-plotly
-altair
-scikit-learn
-xgboost
-shap
-jupyter
-```
+Python · Pandas · NumPy · Streamlit · Plotly · Altair · scikit-learn · XGBoost · SHAP · Jupyter
 
 ---
 
 ## 🏆 Hackathon
 
-This project was submitted for the **ORU IPL Analytics Hackathon**.
-Data covers all IPL seasons from **2008 through 2025** (18 seasons, ball-by-ball).
+Submitted for the **ORU IPL Analytics Hackathon** · Data: all IPL seasons 2007–2025.
 
-Phase 1 delivers a full descriptive-analytics dashboard across 6 tabs.
-Phase 2 adds predictive analytics (toss, pre-match, live) with SHAP explanations in a 7th tab.
+## 👩‍💻 Author
 
-👩‍💻 Author
-Built by Jaspreet Kaur
+**Jaspreet Kaur** 
